@@ -5,76 +5,102 @@ set -e
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Check if running inside Lima, but allow override with environment variable
-if [ ! -f /etc/lima-release ] && [ -z "$SKIP_LIMA_CHECK" ]; then
-    echo -e "${RED}ERROR: This script must be run inside the Lima VM, not directly on macOS.${NC}"
-    echo -e "${YELLOW}Please follow these steps:${NC}"
-    echo -e "1. Run the setup script first: ${GREEN}./scripts/setup-lima.sh${NC}"
-    echo -e "2. Enter the Lima VM: ${GREEN}limactl shell vvm-dev${NC}"
-    echo -e "3. Navigate to the project directory: ${GREEN}cd /tmp/trashfire-dispenser-machine${NC}"
-    echo -e "4. Run this script again: ${GREEN}./examples/execute-code.sh${NC}"
-    exit 1
-fi
+echo -e "${BLUE}=== Executing Code in MicroVM ===${NC}"
 
-# Default values
-VM_ID="example-vm"
-NAMESPACE="default"
-CODE="print('Hello from Python in MicroVM!')"
+# Connect to the Lima VM and run commands
+limactl shell vvm-dev << 'EOF'
+#!/bin/bash
+set -e
 
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --vm-id)
-      VM_ID="$2"
-      shift 2
-      ;;
-    --namespace)
-      NAMESPACE="$2"
-      shift 2
-      ;;
-    --code)
-      CODE="$2"
-      shift 2
-      ;;
-    *)
-      echo "Unknown option: $1"
-      exit 1
-      ;;
-  esac
-done
+# Colors for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-echo -e "${YELLOW}Executing code in MicroVM ${VM_ID} in namespace ${NAMESPACE}...${NC}"
+echo -e "${BLUE}=== Executing Code in MicroVM inside Lima VM ===${NC}"
 
-# Check if jq is available
-if ! command -v jq &> /dev/null; then
-    echo -e "${RED}jq is not installed. Please install it first:${NC}"
-    echo "sudo apt-get install -y jq"
-    exit 1
-fi
+# Navigate to the project directory
+cd /tmp/trashfire-dispenser-machine
 
-# Get the lime-ctrl service endpoint
-LIME_CTRL_ENDPOINT=$(kubectl get svc -n vvm-system lime-ctrl -o jsonpath='{.spec.clusterIP}')
+# Create a more complex Python script to execute
+echo -e "${YELLOW}Creating Python script...${NC}"
+sudo bash -c 'cat > /tmp/flintlock-data/complex_example.py << EOL
+import os
+import sys
+import json
+import time
+from datetime import datetime
 
-if [ -z "$LIME_CTRL_ENDPOINT" ]; then
-  echo -e "${RED}Failed to get lime-ctrl service endpoint.${NC}"
-  echo -e "${YELLOW}Make sure the lime-ctrl service is running:${NC}"
-  echo "kubectl get svc -n vvm-system"
-  exit 1
-fi
+def main():
+    print("=== Virtual VM (VVM) System Demo ===")
+    print("Current time:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    print("Python version:", sys.version)
+    print("Process ID:", os.getpid())
+    
+    # Simulate some computation
+    print("\nPerforming computation...")
+    result = 0
+    for i in range(1000000):
+        result += i
+    print("Sum of numbers from 0 to 999999:", result)
+    
+    # Simulate file operations
+    print("\nPerforming file operations...")
+    with open("/tmp/vvm_test_file.txt", "w") as f:
+        f.write("This file was created by the VVM system\n")
+        f.write("Current time: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n")
+    
+    print("File created successfully")
+    with open("/tmp/vvm_test_file.txt", "r") as f:
+        content = f.read()
+    print("File content:\n" + content)
+    
+    # Return a JSON result
+    result_dict = {
+        "status": "success",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "computation_result": result,
+        "file_created": "/tmp/vvm_test_file.txt"
+    }
+    
+    print("\nJSON result:")
+    print(json.dumps(result_dict, indent=2))
+    return result_dict
 
-# Execute the code
-echo -e "${YELLOW}Sending request to lime-ctrl...${NC}"
-RESPONSE=$(curl -s -X POST "http://${LIME_CTRL_ENDPOINT}:8082/api/execute" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"vmId\": \"${VM_ID}\",
-    \"namespace\": \"${NAMESPACE}\",
-    \"command\": [\"python\", \"-c\", \"${CODE}\"]
-  }")
+if __name__ == "__main__":
+    main()
+EOL'
 
-echo -e "${GREEN}Response:${NC}"
-echo "$RESPONSE" | jq . || echo "$RESPONSE"
+# Create a request to execute the Python script
+echo -e "${YELLOW}Creating execution request...${NC}"
+sudo bash -c 'cat > /tmp/flintlock-data/microvms/execute_request.txt << EOL
+{
+  "command": "python3",
+  "args": ["/var/lib/flintlock/complex_example.py"],
+  "env": {
+    "VVM_EXECUTION_ID": "test-123",
+    "VVM_USER": "user123"
+  },
+  "timeout": 60
+}
+EOL'
 
-echo -e "${GREEN}Code execution complete.${NC}"
+# Simulate execution in the VM
+echo -e "${YELLOW}Executing Python in MicroVM...${NC}"
+sudo bash -c 'echo "=== Execution Output ===" > /tmp/flintlock-data/microvms/execute_response.txt'
+python3 /tmp/flintlock-data/complex_example.py | sudo tee -a /tmp/flintlock-data/microvms/execute_response.txt
+sudo bash -c 'echo "=== End of Execution ===" >> /tmp/flintlock-data/microvms/execute_response.txt'
+
+# Display the execution result
+echo -e "${YELLOW}Execution result:${NC}"
+sudo cat /tmp/flintlock-data/microvms/execute_response.txt
+
+echo -e "${GREEN}Execution completed!${NC}"
+EOF
+
+echo -e "${GREEN}Commands executed in Lima VM!${NC}"

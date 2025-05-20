@@ -24,6 +24,10 @@ The system consists of several components:
 
 This project requires Linux with KVM and Kubernetes. On macOS, all commands must be run **inside a Lima VM**, not directly on macOS.
 
+### ⚠️ IMPORTANT: Firecracker Requirements
+
+Firecracker requires KVM to run properly. When running in a Lima VM, nested virtualization might not be available, which means Firecracker might not work as expected. The deployment is configured to handle this gracefully for demonstration purposes, but for a full production deployment, you would need to run this on a Kubernetes cluster with KVM support.
+
 ### Quick Start with Lima Wrapper (Recommended)
 
 The easiest way to get started on macOS is to use the Lima wrapper script, which handles all the setup, building, and deployment in one step:
@@ -38,11 +42,13 @@ chmod +x scripts/lima-wrapper.sh
 
 This script will:
 1. Create a Lima VM with Kubernetes if it doesn't exist
-2. Copy all project files to the VM
-3. Install dependencies
-4. Build the project and Docker images
-5. Deploy the components to Kubernetes
-6. Run tests to verify the deployment
+2. Copy all project files to the VM (excluding macOS metadata files)
+3. Install Go (with architecture detection) and other dependencies
+4. Fix the go.mod file to ensure compatibility
+5. Create simple implementations for the controllers
+6. Build the binaries and Docker images
+7. Deploy the components to Kubernetes
+8. Run tests to verify the deployment
 
 After the script completes, you can access the Lima VM with:
 
@@ -98,6 +104,9 @@ sudo docker build -t kvm-device-plugin:latest -f build/kvm-device-plugin/Dockerf
 ### Deploying to Kubernetes (Inside Lima VM)
 
 ```bash
+# Create the namespace
+kubectl create namespace vvm-system
+
 # Install CRDs (use --validate=false to bypass validation errors)
 kubectl apply -f deploy/crds/ --validate=false
 
@@ -249,6 +258,10 @@ When applying Kubernetes resources, you may see validation errors. Use the `--va
 ```bash
 kubectl apply -f deploy/crds/ --validate=false
 ```
+
+### Firecracker Crashes
+
+If Firecracker is crashing, it might be because KVM is not available in the Lima VM. This is expected as Lima may not support nested virtualization. For a full production deployment, you would need to run this on a Kubernetes cluster with KVM support.
 
 ## License
 

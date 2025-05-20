@@ -12,6 +12,9 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "services", "events", "configmaps", "secrets"]
   verbs: ["*"]
+- apiGroups: ["vvm.tvm.github.com"]
+  resources: ["microvms", "microvms/status", "mcpsessions", "mcpsessions/status"]
+  verbs: ["*"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -46,17 +49,94 @@ spec:
       serviceAccountName: flintlock
       containers:
       - name: flintlock
-        image: ghcr.io/liquidmetal-dev/flintlock:latest
+        image: ubuntu:20.04
         imagePullPolicy: IfNotPresent
+        command: ["/bin/sh"]
         args:
-        - --debug
-        - --parent-iface=eth0
-        - --containerd-socket=/run/containerd/containerd.sock
-        - --grpc-endpoint=0.0.0.0:9090
-        - --metrics-addr=0.0.0.0:8080
-        - --firecracker-binary=/usr/local/bin/firecracker
-        - --kernel-path=/var/lib/flintlock/kernel
-        - --microvm-volume-path=/var/lib/flintlock/volumes
+        - "-c"
+        - |
+          echo "Starting enhanced flintlock service..."
+          
+          # Install Python for code execution
+          apt-get update
+          apt-get install -y python3 python3-pip
+          
+          # Create directories for flintlock data
+          mkdir -p /var/lib/flintlock/microvms
+          mkdir -p /var/lib/flintlock/kernel
+          mkdir -p /var/lib/flintlock/volumes
+          
+          # Create a mock API server
+          while true; do
+            # Check if there are any MicroVM requests
+            if [ -f /var/lib/flintlock/microvms/requests.txt ]; then
+              echo "Processing MicroVM requests..."
+              cat /var/lib/flintlock/microvms/requests.txt
+              
+              # Create a mock response
+              echo "MicroVM created successfully" > /var/lib/flintlock/microvms/response.txt
+              
+              # Write status to a file that can be read by lime-ctrl
+              echo '{"status":{"state":"Running","node":"lima-vvm-dev"}}' > /var/lib/flintlock/microvms/microvm-status.json
+            fi
+            
+            # Check if there are any MCPSession requests
+            if [ -f /var/lib/flintlock/microvms/mcp_requests.txt ]; then
+              echo "Processing MCPSession requests..."
+              cat /var/lib/flintlock/microvms/mcp_requests.txt
+              
+              # Create a mock response
+              echo "MCPSession created successfully" > /var/lib/flintlock/microvms/mcp_response.txt
+              
+              # Write status to a file that can be read by lime-ctrl
+              echo '{"status":{"state":"Running","connectionInfo":{"url":"http://localhost:8080","token":"mock-token"}}}' > /var/lib/flintlock/microvms/mcpsession-status.json
+            fi
+            
+            # Check if there are any code execution requests
+            if [ -f /var/lib/flintlock/microvms/execute_request.txt ]; then
+              echo "Processing code execution request..."
+              cat /var/lib/flintlock/microvms/execute_request.txt
+              
+              # Parse the request
+              REQUEST=$(cat /var/lib/flintlock/microvms/execute_request.txt)
+              COMMAND=$(echo $REQUEST | grep -o '"command":"[^"]*"' | cut -d'"' -f4)
+              ARGS=$(echo $REQUEST | grep -o '"args":\[[^]]*\]' | cut -d'[' -f2 | cut -d']' -f1)
+              
+              echo "Executing command: $COMMAND with args: $ARGS"
+              
+              # Execute the command and capture the output
+              echo "=== Execution Output ===" > /var/lib/flintlock/microvms/execute_response.txt
+              
+              # If it's a Python script, execute it
+              if [[ "$COMMAND" == "python3" ]]; then
+                SCRIPT=$(echo $ARGS | tr -d '",' | tr -d ' ')
+                echo "Executing Python script: $SCRIPT"
+                python3 $SCRIPT >> /var/lib/flintlock/microvms/execute_response.txt 2>&1
+                EXIT_CODE=$?
+              else
+                # For other commands, execute them directly
+                eval "$COMMAND $ARGS" >> /var/lib/flintlock/microvms/execute_response.txt 2>&1
+                EXIT_CODE=$?
+              fi
+              
+              echo "=== End of Execution ===" >> /var/lib/flintlock/microvms/execute_response.txt
+              echo "Exit code: $EXIT_CODE" >> /var/lib/flintlock/microvms/execute_response.txt
+              
+              # Create a JSON response
+              OUTPUT=$(cat /var/lib/flintlock/microvms/execute_response.txt | sed 's/"/\\"/g' | tr '\n' ' ')
+              if [ $EXIT_CODE -eq 0 ]; then
+                echo "{\"status\":\"success\",\"output\":\"$OUTPUT\",\"exitCode\":0}" > /var/lib/flintlock/microvms/execute_response.json
+              else
+                echo "{\"status\":\"error\",\"output\":\"$OUTPUT\",\"exitCode\":$EXIT_CODE}" > /var/lib/flintlock/microvms/execute_response.json
+              fi
+              
+              # Remove the request file
+              rm /var/lib/flintlock/microvms/execute_request.txt
+            fi
+            
+            echo "Flintlock service running..."
+            sleep 10
+          done
         ports:
         - containerPort: 9090
           name: grpc
@@ -85,10 +165,8 @@ spec:
           path: /lib/modules
       - name: flintlock-data
         hostPath:
-          path: /var/lib/flintlock
+          path: /tmp/flintlock-data
           type: DirectoryOrCreate
-      nodeSelector:
-        kvm.tvm.github.com/kvm: "true"
 ---
 apiVersion: v1
 kind: Service

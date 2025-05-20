@@ -59,6 +59,7 @@ spec:
       - name: lime-ctrl
         image: lime-ctrl:latest
         imagePullPolicy: Never
+        command: ["/usr/local/bin/lime-ctrl"]
         args:
         - --flintlock-endpoint=flintlock.vvm-system.svc.cluster.local:9090
         - --metrics-addr=:8080
@@ -90,6 +91,14 @@ spec:
           requests:
             cpu: 100m
             memory: 128Mi
+        volumeMounts:
+        - name: flintlock-data
+          mountPath: /var/lib/flintlock
+      volumes:
+      - name: flintlock-data
+        hostPath:
+          path: /tmp/flintlock-data
+          type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

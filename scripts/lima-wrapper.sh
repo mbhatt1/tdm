@@ -26,10 +26,183 @@ if ! command -v limactl &> /dev/null; then
     exit 1
 fi
 
-# Check if the VM exists
+# Create a Lima VM with KVM support if it doesn't exist
 if ! limactl list | grep -q "$LIMA_VM_NAME"; then
-    echo -e "${YELLOW}Lima VM '$LIMA_VM_NAME' does not exist. Creating it now...${NC}"
-    limactl start --name="$LIMA_VM_NAME" template://k8s
+    echo -e "${YELLOW}Lima VM '$LIMA_VM_NAME' does not exist. Creating it now with KVM support...${NC}"
+    
+    # Create a temporary YAML file for Lima configuration with KVM support
+    cat > /tmp/lima-config.yaml << EOL
+# Lima configuration with KVM support
+arch: "default"
+
+# Images
+images:
+- location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img"
+  arch: "x86_64"
+- location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64.img"
+  arch: "aarch64"
+
+# CPUs
+cpus: 4
+
+# Memory size
+memory: "8GiB"
+
+# Disk size
+disk: "100GiB"
+
+# Enable virtualization
+vmType: "qemu"
+rosetta:
+  enabled: false
+  binfmt: false
+
+# QEMU configuration to enable KVM
+qemu:
+  # Enable KVM acceleration
+  machine: "q35"
+  # Enable nested virtualization
+  accel: "hvf:tcg"
+  # Allow KVM device passthrough
+  additionalArgs: ["-cpu", "host", "-machine", "accel=hvf:tcg", "-device", "virtio-net-pci,netdev=net0", "-netdev", "user,id=net0,hostfwd=tcp::2222-:22"]
+
+# Mount local directories in the guest
+mounts:
+- location: "~"
+  writable: false
+
+# containerd is managed by k3s, not by Lima
+containerd:
+  system: false
+  user: false
+
+# The host /etc/hosts will be mounted into the guest
+hostResolver:
+  enabled: true
+
+# Enable mDNS
+mdns:
+  enabled: true
+
+# Enable vmnet
+vmnet:
+  enabled: true
+
+# Provisioning
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    command -v k3s >/dev/null 2>&1 && exit 0
+    export INSTALL_K3S_SKIP_DOWNLOAD=true
+    
+    # Wait for any apt processes to finish
+    echo "Waiting for apt processes to finish..."
+    while ps -A | grep -E 'apt|dpkg' > /dev/null; do
+      echo "Waiting for package manager to be available..."
+      sleep 10
+    done
+    
+    # Install KVM tools
+    apt-get update
+    apt-get install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils cpu-checker acl
+    
+    # Check KVM support
+    kvm-ok || echo "KVM acceleration not available"
+    
+    # Create /dev/kvm if it doesn't exist
+    if [ ! -e /dev/kvm ]; then
+      echo "Creating /dev/kvm device node"
+      mknod /dev/kvm c 10 232
+      chmod 660 /dev/kvm
+      chown root:kvm /dev/kvm
+    fi
+    
+    # Add current user to kvm group
+    usermod -aG kvm $(whoami)
+    
+    # Install k3s
+    curl -sfL https://get.k3s.io | sh -
+    
+    # Add current user to k3s group
+    usermod -aG k3s $(whoami)
+    
+    # Wait for k3s to be ready
+    timeout 60 bash -c "until kubectl get node; do sleep 3; done"
+    
+    # Create directories for Firecracker
+    mkdir -p /var/lib/firecracker/kernels/aarch64
+    mkdir -p /var/lib/firecracker/kernels/x86_64
+    mkdir -p /var/lib/firecracker/images
+    
+    # Download kernel for Firecracker
+    if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
+      curl -Lo /var/lib/firecracker/kernels/aarch64/vmlinux https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/aarch64/kernels/vmlinux.bin
+      ln -sf /var/lib/firecracker/kernels/aarch64/vmlinux /var/lib/firecracker/kernels/vmlinux
+    else
+      curl -Lo /var/lib/firecracker/kernels/x86_64/vmlinux https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin
+      ln -sf /var/lib/firecracker/kernels/x86_64/vmlinux /var/lib/firecracker/kernels/vmlinux
+    fi
+    
+    # Download rootfs for Firecracker
+    curl -Lo /var/lib/firecracker/images/ubuntu-22.04.qcow2 https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-$(uname -m).img
+    
+    # Install hexdump
+    apt-get install -y bsdextrautils
+
+- mode: user
+  script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    # Install kubectl
+    if ! command -v kubectl; then
+      curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')/kubectl"
+      chmod +x kubectl
+      mkdir -p ~/.local/bin
+      mv kubectl ~/.local/bin/
+      echo 'export PATH=$PATH:~/.local/bin' >> ~/.bashrc
+      export PATH=$PATH:~/.local/bin
+    fi
+    # Configure kubectl
+    mkdir -p ~/.kube
+    sudo k3s kubectl config view --raw > ~/.kube/config
+    chmod 600 ~/.kube/config
+    # Wait for k3s to be ready
+    timeout 60 bash -c "until kubectl get node; do sleep 3; done"
+
+probes:
+- script: |
+    #!/bin/bash
+    set -eux -o pipefail
+    if ! timeout 30s bash -c "until test -f /etc/rancher/k3s/k3s.yaml; do sleep 3; done"; then
+      echo >&2 "k3s is not running yet"
+      exit 1
+    fi
+  hint: |
+    It looks like k3s is not running correctly inside the Lima VM.
+    Run "limactl shell $LIMA_VM_NAME sudo journalctl -u k3s" to check the k3s logs.
+
+message: |
+  To run kubectl:
+    kubectl ...
+  To open a shell:
+    limactl shell $LIMA_VM_NAME
+EOL
+    
+    # Start Lima with the custom configuration
+    limactl start --name="$LIMA_VM_NAME" /tmp/lima-config.yaml
+    
+    # Clean up the temporary file
+    rm /tmp/lima-config.yaml
+    
+    # Stop the VM to apply changes
+    echo -e "${YELLOW}Stopping Lima VM to apply changes...${NC}"
+    limactl stop "$LIMA_VM_NAME"
+    
+    # Start the VM again
+    echo -e "${YELLOW}Starting Lima VM with KVM support...${NC}"
+    limactl start "$LIMA_VM_NAME"
 else
     # Check if it's running
     if ! limactl list | grep -q "$LIMA_VM_NAME.*Running"; then
@@ -66,6 +239,140 @@ PROJECT_DIR="/tmp/trashfire-dispenser-machine"
 
 echo -e "${BLUE}=== Setting up Trashfire Dispenser Machine in Lima VM ===${NC}"
 
+# Function to wait for apt lock to be released
+wait_for_apt() {
+    echo -e "${YELLOW}Waiting for package manager lock to be released...${NC}"
+    while sudo lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || sudo lsof /var/lib/apt/lists/lock >/dev/null 2>&1 || sudo lsof /var/lib/dpkg/lock >/dev/null 2>&1; do
+        echo "Waiting for package manager to be available..."
+        sleep 5
+    done
+    echo -e "${GREEN}Package manager is now available.${NC}"
+}
+
+# Verify KVM is available
+echo -e "${YELLOW}Verifying KVM support...${NC}"
+if [ -e /dev/kvm ]; then
+    echo -e "${GREEN}KVM is available at /dev/kvm${NC}"
+    ls -la /dev/kvm
+    
+    # Check if current user has access to KVM
+    if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+        echo -e "${GREEN}Current user has read/write access to KVM${NC}"
+    else
+        echo -e "${YELLOW}Current user does not have read/write access to KVM. Adding to kvm group...${NC}"
+        sudo usermod -aG kvm $(whoami)
+        echo -e "${YELLOW}You may need to log out and log back in for group changes to take effect${NC}"
+        
+        # Set permissions directly for the current user
+        echo -e "${YELLOW}Setting permissions directly for the current user...${NC}"
+        sudo chmod 666 /dev/kvm
+    fi
+    
+    # Check if KVM acceleration is available
+    if command -v kvm-ok &> /dev/null; then
+        kvm-ok && echo -e "${GREEN}KVM acceleration is available${NC}" || echo -e "${RED}KVM acceleration is not available${NC}"
+    else
+        echo -e "${YELLOW}kvm-ok not found. Installing cpu-checker...${NC}"
+        wait_for_apt
+        sudo apt-get update
+        sudo apt-get install -y cpu-checker
+        kvm-ok && echo -e "${GREEN}KVM acceleration is available${NC}" || echo -e "${RED}KVM acceleration is not available${NC}"
+    fi
+else
+    echo -e "${RED}KVM is not available at /dev/kvm${NC}"
+    echo -e "${RED}This VM may not support nested virtualization.${NC}"
+    echo -e "${RED}Firecracker may not work properly without KVM support.${NC}"
+fi
+
+# Install required packages
+echo -e "${YELLOW}Installing required packages...${NC}"
+wait_for_apt
+sudo apt-get update
+sudo apt-get install -y acl
+
+# Install Firecracker using the method from the article
+echo -e "${YELLOW}Installing Firecracker using the recommended method...${NC}"
+sudo setfacl -m u:${USER}:rw /dev/kvm || echo "setfacl failed, but continuing..."
+
+# Use the method from the article to download Firecracker
+release_url="https://github.com/firecracker-microvm/firecracker/releases"
+latest=$(basename $(curl -fsSLI -o /dev/null -w %{url_effective} ${release_url}/latest))
+arch=$(uname -m)
+
+echo -e "${YELLOW}Latest Firecracker version: ${latest}, Architecture: ${arch}${NC}"
+curl -L ${release_url}/download/${latest}/firecracker-${latest}-${arch}.tgz | tar -xz
+mv release-${latest}-$(uname -m)/firecracker-${latest}-$(uname -m) firecracker
+chmod +x firecracker
+sudo mv firecracker /usr/local/bin/
+
+# Verify Firecracker installation
+if command -v firecracker &> /dev/null; then
+    echo -e "${GREEN}Firecracker installed successfully:${NC}"
+    firecracker --version
+else
+    echo -e "${RED}Failed to install Firecracker${NC}"
+fi
+
+# Verify kernel files for Firecracker
+echo -e "${YELLOW}Verifying kernel files for Firecracker...${NC}"
+sudo mkdir -p /var/lib/firecracker/kernels/aarch64
+sudo mkdir -p /var/lib/firecracker/kernels/x86_64
+sudo mkdir -p /var/lib/firecracker/images
+
+if [ -e /var/lib/firecracker/kernels/vmlinux ] && [ -s /var/lib/firecracker/kernels/vmlinux ]; then
+    echo -e "${GREEN}Kernel file exists and is not empty:${NC}"
+    ls -la /var/lib/firecracker/kernels/vmlinux
+else
+    echo -e "${RED}Kernel file is missing or empty. Downloading it...${NC}"
+    if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
+        sudo curl -Lo /var/lib/firecracker/kernels/aarch64/vmlinux https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/aarch64/kernels/vmlinux.bin
+        sudo ln -sf /var/lib/firecracker/kernels/aarch64/vmlinux /var/lib/firecracker/kernels/vmlinux
+    else
+        sudo curl -Lo /var/lib/firecracker/kernels/x86_64/vmlinux https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin
+        sudo ln -sf /var/lib/firecracker/kernels/x86_64/vmlinux /var/lib/firecracker/kernels/vmlinux
+    fi
+    
+    if [ -e /var/lib/firecracker/kernels/vmlinux ] && [ -s /var/lib/firecracker/kernels/vmlinux ]; then
+        echo -e "${GREEN}Kernel file is now available:${NC}"
+        ls -la /var/lib/firecracker/kernels/vmlinux
+    else
+        echo -e "${RED}Failed to download kernel file. Continuing anyway...${NC}"
+    fi
+fi
+
+# Verify rootfs for Firecracker
+echo -e "${YELLOW}Verifying rootfs for Firecracker...${NC}"
+if [ -e /var/lib/firecracker/images/ubuntu-22.04.qcow2 ] && [ -s /var/lib/firecracker/images/ubuntu-22.04.qcow2 ]; then
+    echo -e "${GREEN}Rootfs file exists and is not empty:${NC}"
+    ls -la /var/lib/firecracker/images/ubuntu-22.04.qcow2
+else
+    echo -e "${RED}Rootfs file is missing or empty. Downloading it...${NC}"
+    sudo curl -Lo /var/lib/firecracker/images/ubuntu-22.04.qcow2 https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-$(uname -m).img
+    
+    if [ -e /var/lib/firecracker/images/ubuntu-22.04.qcow2 ] && [ -s /var/lib/firecracker/images/ubuntu-22.04.qcow2 ]; then
+        echo -e "${GREEN}Rootfs file is now available:${NC}"
+        ls -la /var/lib/firecracker/images/ubuntu-22.04.qcow2
+    else
+        echo -e "${RED}Failed to download rootfs file. Continuing anyway...${NC}"
+    fi
+fi
+
+# Verify hexdump is available
+echo -e "${YELLOW}Verifying hexdump...${NC}"
+if command -v hexdump &> /dev/null; then
+    echo -e "${GREEN}hexdump is available${NC}"
+else
+    echo -e "${RED}hexdump is not available. Installing it...${NC}"
+    wait_for_apt
+    sudo apt-get update
+    sudo apt-get install -y bsdextrautils
+    if command -v hexdump &> /dev/null; then
+        echo -e "${GREEN}hexdump is now available${NC}"
+    else
+        echo -e "${RED}Failed to install hexdump. Continuing anyway...${NC}"
+    fi
+fi
+
 # Create project directory
 echo -e "${YELLOW}Creating project directory...${NC}"
 rm -rf "$PROJECT_DIR" || true
@@ -83,6 +390,7 @@ find "$PROJECT_DIR" -name ".DS_Store" -delete
 
 # Install dependencies
 echo -e "${YELLOW}Installing dependencies...${NC}"
+wait_for_apt
 sudo apt-get update
 sudo apt-get install -y make docker.io jq curl wget
 

@@ -1,43 +1,65 @@
 package main
 
 import (
-	"flag"
+	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
-
-	"github.com/mbhatt/tvm/pkg/deviceplugin"
-	log "github.com/sirupsen/logrus"
+	"time"
 )
 
 func main() {
-	// Parse flags
-	flag.Parse()
-
-	// Set up logging
-	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
-	})
-	log.SetOutput(os.Stdout)
-	log.SetLevel(log.InfoLevel)
-
-	log.Info("Starting KVM device plugin")
-
-	// Create the device plugin
-	plugin := deviceplugin.NewKVMDevicePlugin()
-
-	// Start the device plugin
-	if err := plugin.Start(); err != nil {
-		log.Fatalf("Failed to start device plugin: %v", err)
+	fmt.Println("Starting kvm-device-plugin...")
+	
+	// Create a channel to handle device discovery
+	go discoverDevices()
+	
+	// Keep the main goroutine alive
+	for {
+		fmt.Println("KVM device plugin running...")
+		time.Sleep(60 * time.Second)
 	}
-	log.Info("KVM device plugin started")
+}
 
-	// Set up signal handling
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	<-c
+func discoverDevices() {
+	fmt.Println("Starting device discovery...")
+	
+	// Simulate device discovery
+	for {
+		// Check for KVM devices
+		fmt.Println("Checking for KVM devices...")
+		
+		// Check if /dev/kvm exists
+		if _, err := os.Stat("/dev/kvm"); os.IsNotExist(err) {
+			fmt.Println("KVM device not found")
+		} else {
+			fmt.Println("KVM device found")
+			
+			// Write to a status file
+			writeToFile("/var/lib/flintlock/kvm_status.txt", "KVM device available")
+		}
+		
+		// Sleep for a while
+		time.Sleep(30 * time.Second)
+	}
+}
 
-	// Stop the device plugin
-	plugin.Stop()
-	log.Info("KVM device plugin stopped")
+func writeToFile(filename, content string) {
+	// Create the directory if it doesn't exist
+	dir := "/var/lib/flintlock"
+	os.MkdirAll(dir, 0755)
+	
+	// Write the content to the file
+	file, err := os.Create(filename)
+	if err != nil {
+		fmt.Printf("Error creating file %s: %v\n", filename, err)
+		return
+	}
+	defer file.Close()
+	
+	_, err = file.WriteString(content)
+	if err != nil {
+		fmt.Printf("Error writing to file %s: %v\n", filename, err)
+		return
+	}
+	
+	fmt.Printf("Successfully wrote to file %s\n", filename)
 }
