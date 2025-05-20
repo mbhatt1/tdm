@@ -2,7 +2,7 @@ package flintlock
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -20,15 +20,34 @@ type Server struct {
 
 // NewServer creates a new flintlock server
 func NewServer(baseDir string) (*Server, error) {
+	log.Infof("Creating new flintlock server with base directory: %s", baseDir)
+	
+	// Check if base directory exists
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+		log.Warnf("Base directory %s does not exist, attempting to create it", baseDir)
+	}
+	
 	// Create base directory if it doesn't exist
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		log.Errorf("Failed to create base directory %s: %v", baseDir, err)
 		return nil, fmt.Errorf("failed to create base directory: %v", err)
 	}
+	log.Infof("Base directory %s created or already exists", baseDir)
 
 	// Create directories for requests and responses
 	microVMsDir := filepath.Join(baseDir, "microvms")
 	if err := os.MkdirAll(microVMsDir, 0755); err != nil {
+		log.Errorf("Failed to create microvms directory %s: %v", microVMsDir, err)
 		return nil, fmt.Errorf("failed to create microvms directory: %v", err)
+	}
+	log.Infof("MicroVMs directory %s created or already exists", microVMsDir)
+	
+	// List the contents of the base directory to verify
+	files, err := os.ReadDir(baseDir)
+	if err != nil {
+		log.Warnf("Failed to read base directory contents: %v", err)
+	} else {
+		log.Infof("Base directory contents: %v", getFileNames(files))
 	}
 
 	return &Server{
@@ -37,9 +56,42 @@ func NewServer(baseDir string) (*Server, error) {
 	}, nil
 }
 
+// getFileNames extracts file names from a slice of DirEntry
+func getFileNames(files []os.DirEntry) []string {
+	var names []string
+	for _, file := range files {
+		names = append(names, file.Name())
+	}
+	return names
+}
+
 // Start starts the flintlock server
 func (s *Server) Start() error {
 	log.Info("Starting flintlock server...")
+	
+	// Check if the base directory exists and is accessible
+	if _, err := os.Stat(s.BaseDir); err != nil {
+		log.Errorf("Base directory %s is not accessible: %v", s.BaseDir, err)
+		return fmt.Errorf("base directory is not accessible: %v", err)
+	}
+	
+	// Check if the microvms directory exists and is accessible
+	microVMsDir := filepath.Join(s.BaseDir, "microvms")
+	if _, err := os.Stat(microVMsDir); err != nil {
+		log.Errorf("MicroVMs directory %s is not accessible: %v", microVMsDir, err)
+		return fmt.Errorf("microvms directory is not accessible: %v", err)
+	}
+	
+	// Try to create a test file to verify write permissions
+	testFile := filepath.Join(s.BaseDir, "test_write_permission.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		log.Errorf("Failed to write test file to base directory: %v", err)
+		return fmt.Errorf("failed to write to base directory: %v", err)
+	}
+	// Clean up test file
+	os.Remove(testFile)
+	
+	log.Info("Directory permissions verified, starting request handler...")
 
 	// Start request handlers
 	go s.handleRequests()

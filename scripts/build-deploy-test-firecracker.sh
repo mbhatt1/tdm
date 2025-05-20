@@ -54,20 +54,21 @@ FROM golang:1.24
 WORKDIR /app
 COPY . .
 
-# Fix go.mod and go.sum with all required dependencies
-RUN go mod tidy
-RUN go get github.com/sirupsen/logrus
-RUN go get google.golang.org/genproto/googleapis/api/httpbody
-RUN go get google.golang.org/genproto/googleapis/rpc/status
-RUN go get google.golang.org/genproto/googleapis/api/annotations
-RUN go get github.com/liquidmetal-dev/flintlock/api/services/microvm/v1alpha1@v0.0.0-20250411143952-ceecbca3c193
-RUN go mod download
-RUN go mod verify
+# Set Go proxy to multiple sources for better reliability
+ENV GOPROXY=https://proxy.golang.org,direct
 
-# Build the components
+# Install dependencies first
+RUN go mod download
+RUN go mod tidy
+
+# Build the components properly
+RUN mkdir -p bin
 RUN go build -o bin/lime-ctrl ./cmd/lime-ctrl
 RUN go build -o bin/flintlock ./cmd/flintlock
 RUN go build -o bin/kvm-device-plugin ./cmd/kvm-device-plugin
+
+# Verify binaries exist and are executable
+RUN ls -la bin/
 EOL
 
 # Build the Docker image
@@ -99,12 +100,20 @@ COPY bin/lime-ctrl /app/lime-ctrl
 ENTRYPOINT ["/app/lime-ctrl"]
 EOL
 
+# Verify flintlock binary exists
+echo -e "${YELLOW}Verifying flintlock binary exists...${NC}"
+if [ ! -s bin/flintlock ]; then
+    echo -e "${RED}Error: flintlock binary is missing or empty${NC}"
+    exit 1
+fi
+
 cat > Dockerfile.flintlock << EOL
 FROM alpine:3.18
 RUN apk --no-cache add ca-certificates python3 bash
 WORKDIR /app
 COPY bin/flintlock /app/flintlock
 RUN mkdir -p /var/lib/flintlock/microvms
+RUN chmod +x /app/flintlock
 VOLUME /var/lib/flintlock
 ENTRYPOINT ["/app/flintlock"]
 EOL
@@ -153,8 +162,13 @@ echo -e "${YELLOW}Waiting for CRDs to be established...${NC}"
 sleep 10
 kubectl get crds | grep vvm.tvm.github.com
 
-# Create shared volume with proper binding
-echo -e "${YELLOW}Creating shared volume with proper binding...${NC}"
+# Delete existing PV and PVC
+echo -e "${YELLOW}Deleting existing PV and PVC...${NC}"
+kubectl delete pv flintlock-data-pv --ignore-not-found
+kubectl delete pvc -n vvm-system flintlock-data-pvc --ignore-not-found
+
+# Create shared volume with hostPath directly
+echo -e "${YELLOW}Creating shared volume with hostPath directly...${NC}"
 cat > deploy/shared-volume.yaml << EOL
 apiVersion: v1
 kind: PersistentVolume
@@ -163,17 +177,15 @@ metadata:
   labels:
     type: local
 spec:
-  storageClassName: manual
+  storageClassName: ""
   capacity:
     storage: 1Gi
   accessModes:
     - ReadWriteMany
   hostPath:
     path: "/tmp/flintlock-data"
+    type: DirectoryOrCreate
   persistentVolumeReclaimPolicy: Retain
-  claimRef:
-    name: flintlock-data-pvc
-    namespace: vvm-system
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -181,19 +193,33 @@ metadata:
   name: flintlock-data-pvc
   namespace: vvm-system
 spec:
-  storageClassName: manual
+  storageClassName: ""
   accessModes:
     - ReadWriteMany
   resources:
     requests:
       storage: 1Gi
-  volumeName: flintlock-data-pv
 EOL
 
+# Apply the new PV and PVC
+echo -e "${YELLOW}Applying new PV and PVC...${NC}"
 kubectl apply -f deploy/shared-volume.yaml
 
-# Create directory for flintlock data
+# Wait for PV and PVC to be bound
+echo -e "${YELLOW}Waiting for PV and PVC to be bound...${NC}"
+sleep 5
+kubectl get pv flintlock-data-pv
+kubectl get pvc -n vvm-system flintlock-data-pvc
+
+# Create directory for flintlock data with proper permissions
+echo -e "${YELLOW}Creating directory for flintlock data with proper permissions...${NC}"
 sudo mkdir -p /tmp/flintlock-data/microvms
+sudo chmod -R 777 /tmp/flintlock-data
+sudo chown -R root:root /tmp/flintlock-data
+
+# Verify the directory exists and has correct permissions
+echo -e "${YELLOW}Verifying flintlock data directory...${NC}"
+ls -la /tmp/flintlock-data
 
 # Apply deployments
 echo -e "${YELLOW}Applying deployments...${NC}"
@@ -246,6 +272,19 @@ spec:
         app: flintlock
     spec:
       serviceAccountName: flintlock
+      # Add node selector to ensure pod is scheduled on a node with the PV
+      nodeSelector:
+        kubernetes.io/hostname: lima-vvm-dev
+      # Add tolerations to ensure pod can be scheduled
+      tolerations:
+      - key: node.kubernetes.io/not-ready
+        operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 300
+      - key: node.kubernetes.io/unreachable
+        operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 300
       containers:
       - name: flintlock
         image: flintlock:latest
@@ -256,6 +295,12 @@ spec:
         volumeMounts:
         - name: flintlock-data
           mountPath: /var/lib/flintlock
+        # Add security context to ensure proper permissions
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        command: ["/bin/sh"]
+        args: ["-c", "ls -la /var/lib/flintlock && /app/flintlock"]
       volumes:
       - name: flintlock-data
         persistentVolumeClaim:
@@ -416,6 +461,14 @@ kubectl get pods -n vvm-system
 # Try to get logs if pod is running
 echo -e "${YELLOW}Trying to get flintlock pod logs if available...${NC}"
 kubectl logs -n vvm-system $FLINTLOCK_POD || true
+
+# Check the events for the pod
+echo -e "${YELLOW}Checking events for the flintlock pod...${NC}"
+kubectl get events -n vvm-system | grep flintlock
+
+# Check the PVC status again
+echo -e "${YELLOW}Checking PVC status again...${NC}"
+kubectl get pvc -n vvm-system flintlock-data-pvc
 
 # Wait longer before creating a MicroVM to ensure controllers are ready
 echo -e "${YELLOW}Waiting for controllers to be fully ready...${NC}"

@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/yourusername/tvm/pkg/flintlock"
+	"github.com/mbhatt/tvm/pkg/flintlock"
 	log "github.com/sirupsen/logrus"
 )
 
