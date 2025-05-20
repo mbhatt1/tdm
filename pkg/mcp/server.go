@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mbhatt/tvm/pkg/apis/vvm/v1alpha1"
+	"github.com/yourusername/tvm/pkg/apis/vvm/v1alpha1"
 	log "github.com/sirupsen/logrus"
 )
 

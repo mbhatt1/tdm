@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mbhatt/tvm/pkg/apis/vvm/v1alpha1"
-	"github.com/mbhatt/tvm/pkg/flintlock"
+	"github.com/yourusername/tvm/pkg/apis/vvm/v1alpha1"
+	"github.com/yourusername/tvm/pkg/flintlock"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -53,7 +52,14 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	}
 
 	// Watch for changes to MicroVM
-	err = c.Watch(&source.Kind{Type: &v1alpha1.MicroVM{}}, &handler.EnqueueRequestForObject{})
+	// Use the new API for controller-runtime v0.20.4
+	err = c.Watch(
+		source.Kind(
+			mgr.GetCache(),
+			&v1alpha1.MicroVM{},
+			&handler.TypedEnqueueRequestForObject[*v1alpha1.MicroVM]{},
+		),
+	)
 	if err != nil {
 		return err
 	}

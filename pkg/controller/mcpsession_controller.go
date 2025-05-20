@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mbhatt/tvm/pkg/apis/vvm/v1alpha1"
-	"github.com/mbhatt/tvm/pkg/mcp"
+	"github.com/yourusername/tvm/pkg/apis/vvm/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -46,7 +45,14 @@ func addMCPSession(mgr manager.Manager, r reconcile.Reconciler) error {
 	}
 
 	// Watch for changes to MCPSession
-	err = c.Watch(&source.Kind{Type: &v1alpha1.MCPSession{}}, &handler.EnqueueRequestForObject{})
+	// Use the new API for controller-runtime v0.20.4
+	err = c.Watch(
+		source.Kind(
+			mgr.GetCache(),
+			&v1alpha1.MCPSession{},
+			&handler.TypedEnqueueRequestForObject[*v1alpha1.MCPSession]{},
+		),
+	)
 	if err != nil {
 		return err
 	}
