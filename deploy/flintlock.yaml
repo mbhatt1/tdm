@@ -51,7 +51,7 @@ spec:
       - name: flintlock
         image: ubuntu:20.04
         imagePullPolicy: IfNotPresent
-        command: ["/bin/sh"]
+        command: ["/bin/bash"]
         args:
         - "-c"
         - |
@@ -59,7 +59,7 @@ spec:
           
           # Install Python for code execution
           apt-get update
-          apt-get install -y python3 python3-pip
+          apt-get install -y python3 python3-pip jq
           
           # Create directories for flintlock data
           mkdir -p /var/lib/flintlock/microvms
@@ -97,33 +97,29 @@ spec:
               echo "Processing code execution request..."
               cat /var/lib/flintlock/microvms/execute_request.txt
               
-              # Parse the request
-              REQUEST=$(cat /var/lib/flintlock/microvms/execute_request.txt)
-              COMMAND=$(echo $REQUEST | grep -o '"command":"[^"]*"' | cut -d'"' -f4)
-              ARGS=$(echo $REQUEST | grep -o '"args":\[[^]]*\]' | cut -d'[' -f2 | cut -d']' -f1)
+              # Parse the request using jq
+              COMMAND=$(jq -r '.command' /var/lib/flintlock/microvms/execute_request.txt)
+              ARGS_JSON=$(jq -r '.args' /var/lib/flintlock/microvms/execute_request.txt)
               
-              echo "Executing command: $COMMAND with args: $ARGS"
+              # Extract the first argument (script path)
+              SCRIPT=$(echo $ARGS_JSON | jq -r '.[0]')
               
-              # Execute the command and capture the output
+              echo "Executing command: $COMMAND with script: $SCRIPT"
+              
+              # Execute the script and capture the output
+              OUTPUT=$(python3 $SCRIPT 2>&1)
+              EXIT_CODE=$?
+              
+              echo "Script output: $OUTPUT"
+              echo "Exit code: $EXIT_CODE"
+              
+              # Write the output to the response file
               echo "=== Execution Output ===" > /var/lib/flintlock/microvms/execute_response.txt
-              
-              # If it's a Python script, execute it
-              if [[ "$COMMAND" == "python3" ]]; then
-                SCRIPT=$(echo $ARGS | tr -d '",' | tr -d ' ')
-                echo "Executing Python script: $SCRIPT"
-                python3 $SCRIPT >> /var/lib/flintlock/microvms/execute_response.txt 2>&1
-                EXIT_CODE=$?
-              else
-                # For other commands, execute them directly
-                eval "$COMMAND $ARGS" >> /var/lib/flintlock/microvms/execute_response.txt 2>&1
-                EXIT_CODE=$?
-              fi
-              
+              echo "$OUTPUT" >> /var/lib/flintlock/microvms/execute_response.txt
               echo "=== End of Execution ===" >> /var/lib/flintlock/microvms/execute_response.txt
               echo "Exit code: $EXIT_CODE" >> /var/lib/flintlock/microvms/execute_response.txt
               
               # Create a JSON response
-              OUTPUT=$(cat /var/lib/flintlock/microvms/execute_response.txt | sed 's/"/\\"/g' | tr '\n' ' ')
               if [ $EXIT_CODE -eq 0 ]; then
                 echo "{\"status\":\"success\",\"output\":\"$OUTPUT\",\"exitCode\":0}" > /var/lib/flintlock/microvms/execute_response.json
               else

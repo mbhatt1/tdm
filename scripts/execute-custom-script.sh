@@ -73,10 +73,16 @@ sleep 5
 # Check if the execution response exists
 echo -e "${YELLOW}Checking execution response...${NC}"
 if [ -f /tmp/flintlock-data/microvms/execute_response.txt ]; then
+    echo -e "${GREEN}=== Execution Output ===${NC}"
     sudo cat /tmp/flintlock-data/microvms/execute_response.txt
 else
     echo "No execution response found"
 fi
+
+# Check the logs of the flintlock pod to get the actual output
+echo -e "${YELLOW}Checking flintlock logs for output...${NC}"
+FLINTLOCK_POD=$(kubectl get pods -n vvm-system -l app=flintlock -o jsonpath='{.items[0].metadata.name}')
+kubectl logs -n vvm-system $FLINTLOCK_POD --tail=50 | grep -A 20 "Executing command"
 
 echo -e "${GREEN}Execution completed!${NC}"
 EOF
