@@ -1,6 +1,8 @@
 package flintlock
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +18,8 @@ type Server struct {
 	BaseDir string
 	// Stop channel
 	stopCh chan struct{}
+	// Firecracker manager
+	fcManager *FirecrackerManager
 }
 
 // NewServer creates a new flintlock server
@@ -50,9 +54,22 @@ func NewServer(baseDir string) (*Server, error) {
 		log.Infof("Base directory contents: %v", getFileNames(files))
 	}
 
+	// Create a Firecracker manager
+	fcManager, err := NewFirecrackerManager(
+		baseDir,
+		filepath.Join(baseDir, "kernel", "vmlinux"),
+		filepath.Join(baseDir, "volumes", "rootfs.img"),
+	)
+	if err != nil {
+		log.Errorf("Failed to create Firecracker manager: %v", err)
+		return nil, fmt.Errorf("failed to create Firecracker manager: %v", err)
+	}
+	log.Infof("Firecracker manager created")
+
 	return &Server{
-		BaseDir: baseDir,
-		stopCh:  make(chan struct{}),
+		BaseDir:    baseDir,
+		stopCh:     make(chan struct{}),
+		fcManager:  fcManager,
 	}, nil
 }
 
@@ -123,14 +140,14 @@ func (s *Server) handleRequests() {
 				log.Info("Processing request...")
 
 				// Read request
-				_, err := ioutil.ReadFile(requestFile)
+				_, err := os.ReadFile(requestFile)
 				if err != nil {
 					log.Errorf("Failed to read request file: %v", err)
 					continue
 				}
 
 				// Write response
-				if err := ioutil.WriteFile(responseFile, []byte("Request processed"), 0644); err != nil {
+				if err := os.WriteFile(responseFile, []byte("Request processed"), 0644); err != nil {
 					log.Errorf("Failed to write response file: %v", err)
 					continue
 				}
@@ -146,22 +163,56 @@ func (s *Server) handleRequests() {
 				log.Info("Processing execute request...")
 
 				// Read request
-				_, err := ioutil.ReadFile(executeRequestFile)
+				requestContent, err := os.ReadFile(executeRequestFile)
 				if err != nil {
 					log.Errorf("Failed to read execute request file: %v", err)
 					continue
 				}
 
-				// Create response
-				response := &ExecutionResponse{
-					Status:   "success",
-					Output:   "Mock execution output",
-					ExitCode: 0,
+				// Parse the request
+				var request ExecutionRequest
+				if err := json.Unmarshal(requestContent, &request); err != nil {
+					log.Errorf("Failed to parse execute request: %v", err)
+					
+					// Create error response
+					response := &ExecutionResponse{
+						Status:   "error",
+						Output:   fmt.Sprintf("Failed to parse request: %v", err),
+						ExitCode: 1,
+						Error:    err.Error(),
+					}
+					
+					// Write response
+					responseText := fmt.Sprintf("=== Execution Output ===\n%s\n=== End of Execution ===\nExit code: %d", response.Output, response.ExitCode)
+					if err := os.WriteFile(executeResponseFile, []byte(responseText), 0644); err != nil {
+						log.Errorf("Failed to write execute response file: %v", err)
+					}
+					continue
+				}
+
+				log.Infof("Executing command in Firecracker VM: %s %v", request.Command, request.Args)
+				
+				// Create a VM if it doesn't exist
+				vmID := "default-vm"
+				
+				// Execute the command in the VM
+				ctx := context.Background()
+				response, err := s.fcManager.ExecuteCode(ctx, vmID, &request)
+				if err != nil {
+					log.Errorf("Failed to execute code in VM: %v", err)
+					
+					// Create error response
+					response = &ExecutionResponse{
+						Status:   "error",
+						Output:   fmt.Sprintf("Failed to execute code in VM: %v", err),
+						ExitCode: 1,
+						Error:    err.Error(),
+					}
 				}
 
 				// Write response
 				responseText := fmt.Sprintf("=== Execution Output ===\n%s\n=== End of Execution ===\nExit code: %d", response.Output, response.ExitCode)
-				if err := ioutil.WriteFile(executeResponseFile, []byte(responseText), 0644); err != nil {
+				if err := os.WriteFile(executeResponseFile, []byte(responseText), 0644); err != nil {
 					log.Errorf("Failed to write execute response file: %v", err)
 					continue
 				}

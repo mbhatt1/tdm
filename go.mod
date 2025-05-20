@@ -1,4 +1,4 @@
-module github.com/yourusername/tvm
+module github.com/mbhatt/tvm
 
 go 1.24
 

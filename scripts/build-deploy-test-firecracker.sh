@@ -57,18 +57,26 @@ COPY . .
 # Set Go proxy to multiple sources for better reliability
 ENV GOPROXY=https://proxy.golang.org,direct
 
+# Fix go.mod and go.sum
+RUN go mod download github.com/pmezard/go-difflib
+RUN go mod tidy
+
 # Install dependencies first
 RUN go mod download
-RUN go mod tidy
+RUN go mod verify
 
 # Build the components properly
 RUN mkdir -p bin
 RUN go build -o bin/lime-ctrl ./cmd/lime-ctrl
-RUN go build -o bin/flintlock ./cmd/flintlock
+# Build for the host architecture (don't specify GOARCH)
+RUN CGO_ENABLED=0 GOOS=linux go build -o bin/flintlock ./cmd/flintlock
 RUN go build -o bin/kvm-device-plugin ./cmd/kvm-device-plugin
 
 # Verify binaries exist and are executable
 RUN ls -la bin/
+# Test the flintlock binary
+RUN chmod +x bin/flintlock
+RUN bin/flintlock --help || echo "Failed to run flintlock: $?"
 EOL
 
 # Build the Docker image
@@ -87,6 +95,10 @@ sudo docker rm tvm-builder-container
 rm Dockerfile.build
 
 echo -e "${GREEN}Components built successfully using Docker with Go 1.24${NC}"
+
+# Fix permissions on the binaries
+echo -e "${YELLOW}Fixing permissions on binaries...${NC}"
+sudo chmod +x bin/lime-ctrl bin/flintlock bin/kvm-device-plugin
 
 # Skip Docker image building and use the binaries directly
 echo -e "${YELLOW}Skipping Docker image building and using binaries directly...${NC}"
@@ -107,15 +119,58 @@ if [ ! -s bin/flintlock ]; then
     exit 1
 fi
 
-cat > Dockerfile.flintlock << EOL
+# Check the flintlock binary directly
+echo -e "${YELLOW}Checking flintlock binary...${NC}"
+echo "Binary location: $(pwd)/bin/flintlock"
+
+# Check if the binary exists
+if [ ! -f bin/flintlock ]; then
+    echo -e "${RED}Error: flintlock binary does not exist${NC}"
+    exit 1
+fi
+
+# Check the file type
+echo -e "${YELLOW}Checking binary file type...${NC}"
+file bin/flintlock
+
+# Test the binary
+echo -e "${YELLOW}Testing flintlock binary...${NC}"
+bin/flintlock --help || echo "Failed to run flintlock: $?"
+
+# Check permissions
+echo "Checking permissions..."
+ls -la bin/flintlock
+
+# Make sure it's executable
+echo "Making binary executable..."
+sudo chmod +x bin/flintlock
+
+# Test the binary
+echo "Testing flintlock binary..."
+bin/flintlock --help || echo "Failed to run flintlock: $?"
+
+# Create a simple Dockerfile for flintlock
+sudo cat > Dockerfile.flintlock << EOL
 FROM alpine:3.18
-RUN apk --no-cache add ca-certificates python3 bash
+RUN apk --no-cache add ca-certificates python3 bash file
 WORKDIR /app
 COPY bin/flintlock /app/flintlock
 RUN mkdir -p /var/lib/flintlock/microvms
 RUN chmod +x /app/flintlock
+
+# Create a simple startup script
+RUN echo '#!/bin/bash' > /app/start.sh && \
+    echo 'echo "Starting flintlock container..."' >> /app/start.sh && \
+    echo 'echo "Listing /var/lib/flintlock:"' >> /app/start.sh && \
+    echo 'ls -la /var/lib/flintlock' >> /app/start.sh && \
+    echo 'echo "Checking binary type:"' >> /app/start.sh && \
+    echo 'file /app/flintlock' >> /app/start.sh && \
+    echo 'echo "Running flintlock..."' >> /app/start.sh && \
+    echo 'exec /app/flintlock' >> /app/start.sh && \
+    chmod +x /app/start.sh
+
 VOLUME /var/lib/flintlock
-ENTRYPOINT ["/app/flintlock"]
+ENTRYPOINT ["/app/start.sh"]
 EOL
 
 cat > Dockerfile.kvm-device-plugin << EOL
@@ -217,6 +272,10 @@ sudo mkdir -p /tmp/flintlock-data/microvms
 sudo chmod -R 777 /tmp/flintlock-data
 sudo chown -R root:root /tmp/flintlock-data
 
+# Verify the directory permissions
+echo -e "${YELLOW}Verifying directory permissions...${NC}"
+ls -la /tmp/flintlock-data
+
 # Verify the directory exists and has correct permissions
 echo -e "${YELLOW}Verifying flintlock data directory...${NC}"
 ls -la /tmp/flintlock-data
@@ -299,8 +358,6 @@ spec:
         securityContext:
           privileged: true
           runAsUser: 0
-        command: ["/bin/sh"]
-        args: ["-c", "ls -la /var/lib/flintlock && /app/flintlock"]
       volumes:
       - name: flintlock-data
         persistentVolumeClaim:
@@ -470,6 +527,14 @@ kubectl get events -n vvm-system | grep flintlock
 echo -e "${YELLOW}Checking PVC status again...${NC}"
 kubectl get pvc -n vvm-system flintlock-data-pvc
 
+# Try to get the strace log if available
+echo -e "${YELLOW}Trying to get strace log if available...${NC}"
+kubectl exec -n vvm-system $FLINTLOCK_POD -- cat /tmp/flintlock_strace.log || true
+
+# Check if we can see the error in the container
+echo -e "${YELLOW}Checking for error messages in the container...${NC}"
+kubectl exec -n vvm-system $FLINTLOCK_POD -- dmesg || true
+
 # Wait longer before creating a MicroVM to ensure controllers are ready
 echo -e "${YELLOW}Waiting for controllers to be fully ready...${NC}"
 sleep 30
@@ -539,9 +604,35 @@ EOL
 # Copy the script to the shared volume
 sudo cp test-script.py /tmp/flintlock-data/custom_script.py
 
+# Create a simple test script to verify Python works
+echo -e "${YELLOW}Creating a simple test script...${NC}"
+sudo bash -c 'cat > /tmp/flintlock-data/test.py << EOL
+#!/usr/bin/env python3
+print("Python test script executed successfully!")
+EOL'
+sudo chmod +x /tmp/flintlock-data/test.py
+
+# Test executing the script directly
+echo -e "${YELLOW}Testing Python script execution...${NC}"
+sudo python3 /tmp/flintlock-data/test.py
+
 # Create execution request
 echo -e "${YELLOW}Creating execution request...${NC}"
 sudo bash -c 'cat > /tmp/flintlock-data/microvms/execute_request.txt << EOL
+{
+  "command": "python3",
+  "args": ["/tmp/flintlock-data/test.py"],
+  "env": {
+    "VVM_EXECUTION_ID": "test-123",
+    "VVM_USER": "user123"
+  },
+  "timeout": 60
+}
+EOL'
+
+# Create a second execution request for the main script
+echo -e "${YELLOW}Creating main script execution request...${NC}"
+sudo bash -c 'cat > /tmp/flintlock-data/microvms/execute_request2.txt << EOL
 {
   "command": "python3",
   "args": ["/var/lib/flintlock/custom_script.py"],

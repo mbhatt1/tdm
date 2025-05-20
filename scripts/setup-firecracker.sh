@@ -93,7 +93,7 @@ EOL'
 
 # Create a script to manage Firecracker VMs
 echo -e "${YELLOW}Creating Firecracker VM management script...${NC}"
-sudo bash -c 'cat > /opt/firecracker/bin/fc-vm << EOL
+sudo bash -c "cat > /opt/firecracker/bin/fc-vm << 'EOFMARKER'
 #!/bin/bash
 set -e
 
@@ -103,136 +103,140 @@ VM_ID=\$1
 ACTION=\$2
 SCRIPT=\$3
 
-VM_DIR="/opt/firecracker/vms/\${VM_ID}"
-SOCKET="\${VM_DIR}/firecracker.socket"
-PID_FILE="\${VM_DIR}/firecracker.pid"
-LOG_FILE="\${VM_DIR}/firecracker.log"
-CONFIG_FILE="\${VM_DIR}/config.json"
-ROOTFS_FILE="\${VM_DIR}/rootfs.ext4"
-SCRIPT_FILE="\${VM_DIR}/script.sh"
-OUTPUT_FILE="\${VM_DIR}/output.txt"
+VM_DIR=\"/opt/firecracker/vms/\${VM_ID}\"
+SOCKET=\"\${VM_DIR}/firecracker.socket\"
+PID_FILE=\"\${VM_DIR}/firecracker.pid\"
+LOG_FILE=\"\${VM_DIR}/firecracker.log\"
+CONFIG_FILE=\"\${VM_DIR}/config.json\"
+ROOTFS_FILE=\"\${VM_DIR}/rootfs.ext4\"
+SCRIPT_FILE=\"\${VM_DIR}/script.sh\"
+OUTPUT_FILE=\"\${VM_DIR}/output.txt\"
 
 function create_vm() {
-  if [ -d "\$VM_DIR" ]; then
-    echo "VM \$VM_ID already exists"
+  if [ -d \"\$VM_DIR\" ]; then
+    echo \"VM \$VM_ID already exists\"
     return 1
   fi
   
-  mkdir -p "\$VM_DIR"
-  cp /opt/firecracker/config/vm-config.json "\$CONFIG_FILE"
-  cp /opt/firecracker/rootfs/bionic.rootfs.ext4 "\$ROOTFS_FILE"
+  mkdir -p \"\$VM_DIR\"
+  cp /opt/firecracker/config/vm-config.json \"\$CONFIG_FILE\"
+  cp /opt/firecracker/rootfs/bionic.rootfs.ext4 \"\$ROOTFS_FILE\"
   
   # Update the config file with the VM-specific paths
-  sed -i "s|/opt/firecracker/rootfs/bionic.rootfs.ext4|\$ROOTFS_FILE|g" "\$CONFIG_FILE"
+  sed -i \"s|/opt/firecracker/rootfs/bionic.rootfs.ext4|\$ROOTFS_FILE|g\" \"\$CONFIG_FILE\"
   
-  echo "VM \$VM_ID created"
+  # Make sure the output file is writable
+  touch \"\$OUTPUT_FILE\"
+  chmod 666 \"\$OUTPUT_FILE\"
+  
+  echo \"VM \$VM_ID created\"
 }
 
 function start_vm() {
-  if [ ! -d "\$VM_DIR" ]; then
-    echo "VM \$VM_ID does not exist"
+  if [ ! -d \"\$VM_DIR\" ]; then
+    echo \"VM \$VM_ID does not exist\"
     return 1
   fi
   
-  if [ -S "\$SOCKET" ]; then
-    echo "VM \$VM_ID is already running"
+  if [ -S \"\$SOCKET\" ]; then
+    echo \"VM \$VM_ID is already running\"
     return 1
   fi
   
   # Start Firecracker
-  rm -f "\$SOCKET"
-  firecracker --api-sock "\$SOCKET" --config-file "\$CONFIG_FILE" > "\$LOG_FILE" 2>&1 &
-  echo \$! > "\$PID_FILE"
+  rm -f \"\$SOCKET\"
+  firecracker --api-sock \"\$SOCKET\" --config-file \"\$CONFIG_FILE\" > \"\$LOG_FILE\" 2>&1 &
+  echo \$! > \"\$PID_FILE\"
   
   # Wait for the socket to be created
   for i in {1..10}; do
-    if [ -S "\$SOCKET" ]; then
-      echo "VM \$VM_ID started"
+    if [ -S \"\$SOCKET\" ]; then
+      echo \"VM \$VM_ID started\"
       return 0
     fi
     sleep 1
   done
   
-  echo "Failed to start VM \$VM_ID"
+  echo \"Failed to start VM \$VM_ID\"
   return 1
 }
 
 function stop_vm() {
-  if [ ! -d "\$VM_DIR" ]; then
-    echo "VM \$VM_ID does not exist"
+  if [ ! -d \"\$VM_DIR\" ]; then
+    echo \"VM \$VM_ID does not exist\"
     return 1
   fi
   
-  if [ ! -f "\$PID_FILE" ]; then
-    echo "VM \$VM_ID is not running"
+  if [ ! -f \"\$PID_FILE\" ]; then
+    echo \"VM \$VM_ID is not running\"
     return 1
   fi
   
-  PID=\$(cat "\$PID_FILE")
+  PID=\$(cat \"\$PID_FILE\")
   kill -9 \$PID || true
-  rm -f "\$PID_FILE" "\$SOCKET"
+  rm -f \"\$PID_FILE\" \"\$SOCKET\"
   
-  echo "VM \$VM_ID stopped"
+  echo \"VM \$VM_ID stopped\"
 }
 
 function delete_vm() {
-  if [ ! -d "\$VM_DIR" ]; then
-    echo "VM \$VM_ID does not exist"
+  if [ ! -d \"\$VM_DIR\" ]; then
+    echo \"VM \$VM_ID does not exist\"
     return 1
   fi
   
-  if [ -f "\$PID_FILE" ]; then
+  if [ -f \"\$PID_FILE\" ]; then
     stop_vm
   fi
   
-  rm -rf "\$VM_DIR"
+  rm -rf \"\$VM_DIR\"
   
-  echo "VM \$VM_ID deleted"
+  echo \"VM \$VM_ID deleted\"
 }
 
 function execute_script() {
-  if [ ! -d "\$VM_DIR" ]; then
-    echo "VM \$VM_ID does not exist"
+  if [ ! -d \"\$VM_DIR\" ]; then
+    echo \"VM \$VM_ID does not exist\"
     return 1
   fi
   
-  if [ ! -S "\$SOCKET" ]; then
-    echo "VM \$VM_ID is not running"
+  if [ ! -S \"\$SOCKET\" ]; then
+    echo \"VM \$VM_ID is not running\"
     return 1
   fi
   
-  if [ -z "\$SCRIPT" ]; then
-    echo "No script provided"
+  if [ -z \"\$SCRIPT\" ]; then
+    echo \"No script provided\"
     return 1
   fi
   
   # Copy the script to the VM directory
-  cp "\$SCRIPT" "\$SCRIPT_FILE"
+  cp \"\$SCRIPT\" \"\$SCRIPT_FILE\"
   
   # TODO: In a real implementation, we would use SSH or another method to execute the script inside the VM
   # For now, we'll just simulate execution by running it locally
-  python3 "\$SCRIPT_FILE" > "\$OUTPUT_FILE" 2>&1
+  python3 \"\$SCRIPT_FILE\" > \"\$OUTPUT_FILE\" 2>&1
   EXIT_CODE=\$?
   
-  echo "Script executed in VM \$VM_ID with exit code \$EXIT_CODE"
+  echo \"Script executed in VM \$VM_ID with exit code \$EXIT_CODE\"
   return \$EXIT_CODE
 }
 
 function get_output() {
-  if [ ! -d "\$VM_DIR" ]; then
-    echo "VM \$VM_ID does not exist"
+  if [ ! -d \"\$VM_DIR\" ]; then
+    echo \"VM \$VM_ID does not exist\"
     return 1
   fi
   
-  if [ ! -f "\$OUTPUT_FILE" ]; then
-    echo "No output available for VM \$VM_ID"
+  if [ ! -f \"\$OUTPUT_FILE\" ]; then
+    echo \"No output available for VM \$VM_ID\"
     return 1
   fi
   
-  cat "\$OUTPUT_FILE"
+  cat \"\$OUTPUT_FILE\"
 }
 
-case "\$ACTION" in
+case \"\$ACTION\" in
   create)
     create_vm
     ;;
@@ -252,11 +256,11 @@ case "\$ACTION" in
     get_output
     ;;
   *)
-    echo "Usage: \$0 <vm-id> {create|start|stop|delete|execute|output} [script]"
+    echo \"Usage: \$0 <vm-id> {create|start|stop|delete|execute|output} [script]\"
     exit 1
     ;;
 esac
-EOL'
+EOFMARKER"
 
 sudo chmod +x /opt/firecracker/bin/fc-vm
 sudo ln -sf /opt/firecracker/bin/fc-vm /usr/local/bin/fc-vm
