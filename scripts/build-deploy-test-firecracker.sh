@@ -462,7 +462,7 @@ import sys
 import datetime
 import platform
 
-print('=== Trashfire Vending Machine Test ===')
+print('=== Trashfire Dispensing Machine Test ===')
 print('Current time:', datetime.datetime.now())
 print('Python version:', sys.version)
 print('Process ID:', os.getpid())
