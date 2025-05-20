@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vvm-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lime-ctrl
+  namespace: vvm-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lime-ctrl
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "events", "configmaps", "secrets"]
+  verbs: ["*"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets", "statefulsets"]
+  verbs: ["*"]
+- apiGroups: ["vvm.tvm.github.com"]
+  resources: ["microvms", "microvms/status", "mcpsessions", "mcpsessions/status"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lime-ctrl
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lime-ctrl
+subjects:
+- kind: ServiceAccount
+  name: lime-ctrl
+  namespace: vvm-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lime-ctrl
+  namespace: vvm-system
+  labels:
+    app: lime-ctrl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lime-ctrl
+  template:
+    metadata:
+      labels:
+        app: lime-ctrl
+    spec:
+      serviceAccountName: lime-ctrl
+      containers:
+      - name: lime-ctrl
+        image: lime-ctrl:latest
+        imagePullPolicy: Never
+        args:
+        - --flintlock-endpoint=flintlock.vvm-system.svc.cluster.local:9090
+        - --metrics-addr=:8080
+        - --health-probe-addr=:8081
+        - --mcp-addr=:8082
+        ports:
+        - containerPort: 8080
+          name: metrics
+        - containerPort: 8081
+          name: health
+        - containerPort: 8082
+          name: mcp
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lime-ctrl
+  namespace: vvm-system
+spec:
+  selector:
+    app: lime-ctrl
+  ports:
+  - port: 8082
+    targetPort: 8082
+    name: mcp
+  - port: 8080
+    targetPort: 8080
+    name: metrics

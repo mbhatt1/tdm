@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flintlock
+  namespace: vvm-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flintlock
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "events", "configmaps", "secrets"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flintlock
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flintlock
+subjects:
+- kind: ServiceAccount
+  name: flintlock
+  namespace: vvm-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flintlock
+  namespace: vvm-system
+  labels:
+    app: flintlock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flintlock
+  template:
+    metadata:
+      labels:
+        app: flintlock
+    spec:
+      serviceAccountName: flintlock
+      containers:
+      - name: flintlock
+        image: ghcr.io/liquidmetal-dev/flintlock:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - --debug
+        - --parent-iface=eth0
+        - --containerd-socket=/run/containerd/containerd.sock
+        - --grpc-endpoint=0.0.0.0:9090
+        - --metrics-addr=0.0.0.0:8080
+        - --firecracker-binary=/usr/local/bin/firecracker
+        - --kernel-path=/var/lib/flintlock/kernel
+        - --microvm-volume-path=/var/lib/flintlock/volumes
+        ports:
+        - containerPort: 9090
+          name: grpc
+        - containerPort: 8080
+          name: metrics
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: containerd-socket
+          mountPath: /run/containerd/containerd.sock
+        - name: dev
+          mountPath: /dev
+        - name: modules
+          mountPath: /lib/modules
+        - name: flintlock-data
+          mountPath: /var/lib/flintlock
+      volumes:
+      - name: containerd-socket
+        hostPath:
+          path: /run/containerd/containerd.sock
+      - name: dev
+        hostPath:
+          path: /dev
+      - name: modules
+        hostPath:
+          path: /lib/modules
+      - name: flintlock-data
+        hostPath:
+          path: /var/lib/flintlock
+          type: DirectoryOrCreate
+      nodeSelector:
+        kvm.tvm.github.com/kvm: "true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flintlock
+  namespace: vvm-system
+spec:
+  selector:
+    app: flintlock
+  ports:
+  - port: 9090
+    targetPort: 9090
+    name: grpc
+  - port: 8080
+    targetPort: 8080
+    name: metrics

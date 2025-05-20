@@ -1,0 +1,78 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mcpsessions.vvm.tvm.github.com
+spec:
+  group: vvm.tvm.github.com
+  names:
+    kind: MCPSession
+    listKind: MCPSessionList
+    plural: mcpsessions
+    singular: mcpsession
+    shortNames:
+    - mcp
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - userId
+            properties:
+              userId:
+                type: string
+                description: "User identifier"
+              groupId:
+                type: string
+                description: "Group identifier"
+              vmId:
+                type: string
+                description: "Associated VM identifier"
+              sessionType:
+                type: string
+                description: "Type of session"
+          status:
+            type: object
+            properties:
+              state:
+                type: string
+                enum:
+                - Creating
+                - Running
+                - Error
+                - Deleted
+                description: "Current state of the session"
+              connectionInfo:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    description: "URL for connecting to the session"
+                  token:
+                    type: string
+                    description: "Token for authenticating to the session"
+              lastActivity:
+                type: string
+                format: date-time
+                description: "Timestamp of last activity"
+              error:
+                type: string
+                description: "Error message if the session is in an error state"
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: State
+      type: string
+      jsonPath: .status.state
+    - name: User
+      type: string
+      jsonPath: .spec.userId
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
