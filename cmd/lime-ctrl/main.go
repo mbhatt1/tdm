@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"time"
+
+	"github.com/mbhatt/tvm/pkg/flintlock"
 )
 
 // ExecutionRequest represents a request to execute code in a MicroVM
@@ -14,6 +18,7 @@ type ExecutionRequest struct {
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env"`
 	Timeout int               `json:"timeout"`
+	VMID    string            `json:"vmId"`
 }
 
 // ExecutionResponse represents the response from executing code in a MicroVM
@@ -24,8 +29,24 @@ type ExecutionResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// Configuration for the controller
+var (
+	flintlockEndpoint = "localhost:9090" // Default endpoint for Flintlock gRPC server
+)
+
 func main() {
 	fmt.Println("Starting lime-ctrl...")
+	
+	// Check if FLINTLOCK_ENDPOINT environment variable is set
+	if endpoint := os.Getenv("FLINTLOCK_ENDPOINT"); endpoint != "" {
+		flintlockEndpoint = endpoint
+		fmt.Printf("Using Flintlock endpoint from environment: %s\n", flintlockEndpoint)
+	} else {
+		fmt.Printf("Using default Flintlock endpoint: %s\n", flintlockEndpoint)
+	}
+	
+	// Start HTTP server for API requests
+	go startHTTPServer()
 	
 	// Create a channel to handle MicroVM requests
 	go handleMicroVMRequests()
@@ -44,6 +65,74 @@ func main() {
 		checkStatusFiles()
 		
 		time.Sleep(60 * time.Second)
+	}
+}
+
+func startHTTPServer() {
+	http.HandleFunc("/api/execute", handleExecuteRequest)
+	
+	fmt.Println("Starting HTTP server on :8080...")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fmt.Printf("Failed to start HTTP server: %v\n", err)
+	}
+}
+
+func handleExecuteRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	// Parse the request body
+	var request ExecutionRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse request: %v", err), http.StatusBadRequest)
+		return
+	}
+	
+	// Validate the request
+	if request.VMID == "" {
+		http.Error(w, "VM ID is required", http.StatusBadRequest)
+		return
+	}
+	
+	// Create a flintlock client
+	flintlockClient, err := flintlock.NewClient(flintlockEndpoint)
+	if err != nil {
+		fmt.Printf("Error creating flintlock client: %v\n", err)
+		http.Error(w, fmt.Sprintf("Error creating flintlock client: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer flintlockClient.Close()
+	
+	// Convert the request to a flintlock execution request
+	execReq := &flintlock.ExecutionRequest{
+		Command: request.Command,
+		Args:    request.Args,
+		Env:     request.Env,
+	}
+	
+	// Execute the code in the VM
+	execResp, err := flintlockClient.ExecuteCode(r.Context(), request.VMID, execReq)
+	if err != nil {
+		fmt.Printf("Error executing code in VM: %v\n", err)
+		http.Error(w, fmt.Sprintf("Error executing code in VM: %v", err), http.StatusInternalServerError)
+		return
+	}
+	
+	// Convert the response
+	response := ExecutionResponse{
+		Status:   execResp.Status,
+		Output:   execResp.Output,
+		ExitCode: execResp.ExitCode,
+		Error:    execResp.Error,
+	}
+	
+	// Return the response as JSON
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -159,6 +248,7 @@ if __name__ == "__main__":
 			"VVM_USER":         "user123",
 		},
 		Timeout: 60,
+		VMID:    "test-microvm-123",
 	}
 	
 	// Marshal the request to JSON
@@ -195,14 +285,34 @@ func processExecutionRequests() {
 		// Forward the request to flintlock
 		fmt.Printf("Forwarding execution request to flintlock: %+v\n", request)
 		
-		// In a real implementation, we would send the request to flintlock
-		// and wait for the response. For now, we'll just simulate a response.
+		// Create a flintlock client
+		flintlockClient, err := flintlock.NewClient(flintlockEndpoint)
+		if err != nil {
+			fmt.Printf("Error creating flintlock client: %v\n", err)
+			return
+		}
+		defer flintlockClient.Close()
 		
-		// Simulate a response
+		// Convert the request to a flintlock execution request
+		execReq := &flintlock.ExecutionRequest{
+			Command: request.Command,
+			Args:    request.Args,
+			Env:     request.Env,
+		}
+		
+		// Execute the code in the VM
+		execResp, err := flintlockClient.ExecuteCode(context.Background(), request.VMID, execReq)
+		if err != nil {
+			fmt.Printf("Error executing code in VM: %v\n", err)
+			return
+		}
+		
+		// Convert the response
 		response := ExecutionResponse{
-			Status:   "success",
-			Output:   "Execution completed successfully",
-			ExitCode: 0,
+			Status:   execResp.Status,
+			Output:   execResp.Output,
+			ExitCode: execResp.ExitCode,
+			Error:    execResp.Error,
 		}
 		
 		// Marshal the response to JSON

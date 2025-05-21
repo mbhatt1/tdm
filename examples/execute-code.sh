@@ -90,11 +90,10 @@ sudo bash -c 'cat > /tmp/flintlock-data/microvms/execute_request.txt << EOL
 }
 EOL'
 
-# Simulate execution in the VM
+# Execute in the VM (let flintlock handle it)
 echo -e "${YELLOW}Executing Python in MicroVM...${NC}"
-sudo bash -c 'echo "=== Execution Output ===" > /tmp/flintlock-data/microvms/execute_response.txt'
-python3 /tmp/flintlock-data/complex_example.py | sudo tee -a /tmp/flintlock-data/microvms/execute_response.txt
-sudo bash -c 'echo "=== End of Execution ===" >> /tmp/flintlock-data/microvms/execute_response.txt'
+echo "Waiting for flintlock to process the request..."
+sleep 10
 
 # Display the execution result
 echo -e "${YELLOW}Execution result:${NC}"

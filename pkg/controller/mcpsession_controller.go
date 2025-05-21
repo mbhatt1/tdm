@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"context"
 	"fmt"
 	"time"
 
-	"github.com/yourusername/tvm/pkg/apis/vvm/v1alpha1"
+	"github.com/mbhatt/tvm/pkg/apis/vvm/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -184,10 +186,28 @@ func (r *ReconcileMCPSession) handleCreating(ctx context.Context, instance *v1al
 
 	// MicroVM is ready, update session status
 	instance.Status.State = v1alpha1.MCPSessionStateRunning
+	// Generate a secure token
+	token := generateSecureToken()
+	
 	instance.Status.ConnectionInfo = &v1alpha1.ConnectionInfo{
 		URL:   fmt.Sprintf("http://%s:8080", vm.Status.HostPod),
-		Token: "session-token", // In a real implementation, generate a secure token
+		Token: token,
 	}
+
+// generateSecureToken generates a secure random token
+func generateSecureToken() string {
+	// Generate 32 bytes of random data
+	b := make([]byte, 32)
+	_, err := rand.Read(b)
+	if err != nil {
+		// If we can't generate random data, use a timestamp-based fallback
+		// This is not as secure but better than a hardcoded value
+		return fmt.Sprintf("token-%d", time.Now().UnixNano())
+	}
+	
+	// Encode as base64
+	return base64.StdEncoding.EncodeToString(b)
+}
 	instance.Status.LastActivity = &metav1.Time{Time: time.Now()}
 	err = r.client.Status().Update(ctx, instance)
 	if err != nil {

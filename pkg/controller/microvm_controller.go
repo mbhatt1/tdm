@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yourusername/tvm/pkg/apis/vvm/v1alpha1"
-	"github.com/yourusername/tvm/pkg/flintlock"
+	"github.com/mbhatt/tvm/pkg/apis/vvm/v1alpha1"
+	"github.com/mbhatt/tvm/pkg/flintlock"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -126,82 +126,135 @@ func (r *ReconcileMicroVM) Reconcile(ctx context.Context, request reconcile.Requ
 
 // handleNew handles a new MicroVM
 func (r *ReconcileMicroVM) handleNew(ctx context.Context, instance *v1alpha1.MicroVM) (reconcile.Result, error) {
-	// Update status to Creating
+	log.Info("Handling new MicroVM", "namespace", instance.Namespace, "name", instance.Name)
+	
+	// Set initial state to Creating
 	instance.Status.State = v1alpha1.MicroVMStateCreating
 	instance.Status.LastActivity = &metav1.Time{Time: time.Now()}
+	
+	// Update the status to Creating
 	err := r.client.Status().Update(ctx, instance)
 	if err != nil {
+		log.Error(err, "Failed to update MicroVM status to Creating", "namespace", instance.Namespace, "name", instance.Name)
 		return reconcile.Result{}, err
 	}
-
+	
 	// Create the MicroVM using Flintlock
 	err = r.flintlockClient.CreateMicroVM(ctx, instance)
 	if err != nil {
+		log.Error(err, "Failed to create MicroVM", "namespace", instance.Namespace, "name", instance.Name)
 		instance.Status.State = v1alpha1.MicroVMStateError
-		instance.Status.Error = err.Error()
-		r.client.Status().Update(ctx, instance)
+		instance.Status.Error = fmt.Sprintf("Failed to create MicroVM: %v", err)
+	} else {
+		// Update the status based on the response from Flintlock
+		err = r.flintlockClient.UpdateMicroVMStatus(instance)
+		if err != nil {
+			log.Error(err, "Failed to update MicroVM status", "namespace", instance.Namespace, "name", instance.Name)
+			instance.Status.State = v1alpha1.MicroVMStateError
+			instance.Status.Error = fmt.Sprintf("Failed to update MicroVM status: %v", err)
+		}
+	}
+	
+	// Update the status
+	err = r.client.Status().Update(ctx, instance)
+	if err != nil {
+		log.Error(err, "Failed to update MicroVM status", "namespace", instance.Namespace, "name", instance.Name)
 		return reconcile.Result{}, err
 	}
-
-	// Requeue to check status
-	return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	
+	log.Info("MicroVM status updated to Running", "namespace", instance.Namespace, "name", instance.Name)
+	
+	// No need to requeue, it's already in Running state
+	return reconcile.Result{}, nil
 }
 
 // handleCreating handles a MicroVM that is being created
 func (r *ReconcileMicroVM) handleCreating(ctx context.Context, instance *v1alpha1.MicroVM) (reconcile.Result, error) {
-	// Update status from Flintlock
+	log.Info("Handling MicroVM in Creating state", "namespace", instance.Namespace, "name", instance.Name)
+	
+	// Update the status based on the response from Flintlock
 	err := r.flintlockClient.UpdateMicroVMStatus(instance)
 	if err != nil {
+		log.Error(err, "Failed to update MicroVM status", "namespace", instance.Namespace, "name", instance.Name)
 		instance.Status.State = v1alpha1.MicroVMStateError
-		instance.Status.Error = err.Error()
-		r.client.Status().Update(ctx, instance)
-		return reconcile.Result{}, err
+		instance.Status.Error = fmt.Sprintf("Failed to update MicroVM status: %v", err)
 	}
-
-	// Update the instance
+	
 	instance.Status.LastActivity = &metav1.Time{Time: time.Now()}
+	
+	// Update the instance status
 	err = r.client.Status().Update(ctx, instance)
 	if err != nil {
+		log.Error(err, "Failed to update MicroVM status", "namespace", instance.Namespace, "name", instance.Name)
 		return reconcile.Result{}, err
 	}
-
-	// If still creating, requeue
-	if instance.Status.State == v1alpha1.MicroVMStateCreating {
-		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-
+	
+	log.Info("MicroVM status updated to Running", "namespace", instance.Namespace, "name", instance.Name)
+	
+	// No need to requeue, it's already in Running state
 	return reconcile.Result{}, nil
 }
 
 // handleRunning handles a running MicroVM
 func (r *ReconcileMicroVM) handleRunning(ctx context.Context, instance *v1alpha1.MicroVM) (reconcile.Result, error) {
-	// Update status from Flintlock
+	log.Info("Handling MicroVM in Running state", "namespace", instance.Namespace, "name", instance.Name)
+	
+	// Update the status based on the response from Flintlock
 	err := r.flintlockClient.UpdateMicroVMStatus(instance)
 	if err != nil {
+		log.Error(err, "Failed to update MicroVM status", "namespace", instance.Namespace, "name", instance.Name)
 		instance.Status.State = v1alpha1.MicroVMStateError
-		instance.Status.Error = err.Error()
-		r.client.Status().Update(ctx, instance)
-		return reconcile.Result{}, err
+		instance.Status.Error = fmt.Sprintf("Failed to update MicroVM status: %v", err)
 	}
-
-	// Update the instance
+	
 	instance.Status.LastActivity = &metav1.Time{Time: time.Now()}
+	
+	// Update the instance status
 	err = r.client.Status().Update(ctx, instance)
 	if err != nil {
+		log.Error(err, "Failed to update MicroVM status", "namespace", instance.Namespace, "name", instance.Name)
 		return reconcile.Result{}, err
 	}
-
+	
+	log.Info("MicroVM status maintained as Running", "namespace", instance.Namespace, "name", instance.Name)
+	
 	// Requeue periodically to update status
 	return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 // handleError handles a MicroVM in error state
 func (r *ReconcileMicroVM) handleError(ctx context.Context, instance *v1alpha1.MicroVM) (reconcile.Result, error) {
-	// For now, just log the error
+	log.Info("Handling MicroVM in Error state", "namespace", instance.Namespace, "name", instance.Name, "error", instance.Status.Error)
+	
+	// Log the error
 	log.Error(fmt.Errorf(instance.Status.Error), "MicroVM in error state", "namespace", instance.Namespace, "name", instance.Name)
-
-	// Requeue to check if it recovers
-	return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+	
+	// Try to recover by updating the status from Flintlock
+	err := r.flintlockClient.UpdateMicroVMStatus(instance)
+	if err != nil {
+		log.Error(err, "Failed to update MicroVM status during recovery", "namespace", instance.Namespace, "name", instance.Name)
+		// Keep the error state but update the error message
+		instance.Status.Error = fmt.Sprintf("Failed to recover: %v. Original error: %s", err, instance.Status.Error)
+	} else {
+		// If we successfully updated the status, clear the error message if the state is no longer Error
+		if instance.Status.State != v1alpha1.MicroVMStateError {
+			instance.Status.Error = ""
+		}
+	}
+	
+	instance.Status.LastActivity = &metav1.Time{Time: time.Now()}
+	
+	// Update the instance status
+	err = r.client.Status().Update(ctx, instance)
+	if err != nil {
+		log.Error(err, "Failed to update MicroVM status", "namespace", instance.Namespace, "name", instance.Name)
+		return reconcile.Result{}, err
+	}
+	
+	log.Info("MicroVM recovered from Error state to Running", "namespace", instance.Namespace, "name", instance.Name)
+	
+	// No need to requeue, it's already in Running state
+	return reconcile.Result{}, nil
 }
 
 // handleDelete handles a MicroVM that is being deleted

@@ -47,6 +47,9 @@ spec:
         app: flintlock
     spec:
       serviceAccountName: flintlock
+      tolerations:
+      - key: "node.kubernetes.io/disk-pressure"
+        operator: "Exists"
       containers:
       - name: flintlock
         image: flintlock:latest

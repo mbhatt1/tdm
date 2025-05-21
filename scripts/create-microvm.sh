@@ -24,9 +24,6 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}=== Creating MicroVM inside Lima VM ===${NC}"
 
-# Navigate to the project directory
-cd /tmp/trashfire-dispenser-machine
-
 # Create a MicroVM custom resource
 echo -e "${YELLOW}Creating MicroVM custom resource...${NC}"
 cat << EOL | kubectl apply -f -

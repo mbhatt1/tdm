@@ -55,6 +55,9 @@ spec:
         app: lime-ctrl
     spec:
       serviceAccountName: lime-ctrl
+      tolerations:
+      - key: "node.kubernetes.io/disk-pressure"
+        operator: "Exists"
       containers:
       - name: lime-ctrl
         image: lime-ctrl:latest
