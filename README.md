@@ -1,306 +1,100 @@
-<<<<<<< HEAD
 # Trashfire Vending Machine (TVM)
-=======
-# Trashfire Dispensing Machine (TVM)
->>>>>>> 10bfa50 (Squashed history)
 
-A Kubernetes-native solution for managing lightweight virtual machines using Firecracker. It enables users to create, manage, and execute code within isolated microVMs, with support for Model Context Protocol (MCP) sessions.
+A stateless, Python-based system that provides isolated environments for secure code execution using Firecracker microVMs. It offers cross-platform compatibility through Lima, with service mesh integration via Istio for seamless API access from host systems.
 
-## Overview
+## Design Principles
 
-<<<<<<< HEAD
-Trashfire Vending Machine (TVM) consists of several components:
+1. **Complete Statelessness**: Zero persistent state across all system components
+2. **Cross-Platform Compatibility**: Consistent behavior across macOS, Linux, and Windows
+3. **Strong Isolation**: Hardware-level VM isolation for untrusted code
+4. **Service Mesh Integration**: Seamless connectivity via Istio across system boundaries
+5. **Python First**: Pure Python implementation for maximum portability
+6. **Realistic Performance Expectations**: Honest performance characteristics accounting for virtualization overhead
+7. **Version Independence**: Clear version compatibility matrix with minimal version coupling
+8. **Robust Failure Handling**: Graceful recovery from failures at any layer
+9. **Complete Resource Cleanup**: No orphaned resources in any failure scenario
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                       Kubernetes Cluster                         │
-│                                                                  │
-│  ┌───────────────┐    ┌───────────────┐    ┌───────────────┐    │
-│  │     Node 1    │    │     Node 2    │    │     Node 3    │    │
-│  │               │    │               │    │               │    │
-│  │ ┌───────────┐ │    │ ┌───────────┐ │    │ ┌───────────┐ │    │
-│  │ │ lime-ctrl │ │    │ │kvm-device-│ │    │ │firecracker│ │    │
-│  │ │           │ │    │ │  plugin   │ │    │ │   host    │ │    │
-│  │ └───────────┘ │    │ └───────────┘ │    │ └───────────┘ │    │
-│  │       │       │    │       │       │    │       │       │    │
-│  │       ▼       │    │       ▼       │    │       ▼       │    │
-│  │ ┌───────────┐ │    │ ┌───────────┐ │    │ ┌───────────┐ │    │
-│  │ │  MicroVM  │ │    │ │  MicroVM  │ │    │ │  MicroVM  │ │    │
-│  │ │           │ │    │ │           │ │    │ │           │ │    │
-│  │ └───────────┘ │    │ └───────────┘ │    │ └───────────┘ │    │
-│  └───────────────┘    └───────────────┘    └───────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
-```
-=======
-Trashfire Dispensing Machine (TVM) is a comprehensive platform that provides secure, isolated environments for code execution using Firecracker microVMs orchestrated by Kubernetes. The system is designed for high performance, security, and scalability, making it ideal for running untrusted code in production environments.
+## System Architecture
 
-### Architecture Diagram
+The system consists of four primary layers:
 
-```mermaid
-graph TD
-    subgraph "Kubernetes Cluster"
-        subgraph "Control Plane"
-            API[API Server]
-            ETCD[etcd]
-            SCHED[Scheduler]
-            CM[Controller Manager]
-        end
-        
-        subgraph "Node 1"
-            LC[lime-ctrl]
-            LC -->|manages| CRD1[Custom Resources]
-            LC -->|communicates with| FL1[flintlock]
-        end
-        
-        subgraph "Node 2"
-            KDP[kvm-device-plugin]
-            KDP -->|advertises| KVM[KVM Devices]
-            FL2[flintlock]
-            FL2 -->|runs| MV1[MicroVM 1]
-            FL2 -->|runs| MV2[MicroVM 2]
-        end
-        
-        subgraph "Node 3"
-            FL3[flintlock]
-            FL3 -->|runs| MV3[MicroVM 3]
-            MV3 -->|executes| CODE[User Code]
-        end
-        
-        API -->|watches| CRD1
-        SCHED -->|schedules| FL2
-        SCHED -->|schedules| FL3
-        LC -->|controls| FL2
-        LC -->|controls| FL3
-    end
-    
-    CLIENT[Client] -->|creates| MCPSESSION[MCP Session]
-    CLIENT -->|creates| MICROVM[MicroVM Resource]
-    MCPSESSION -->|processed by| LC
-    MICROVM -->|processed by| LC
-```
-
-The system uses a microservices architecture with the following key components:
->>>>>>> 10bfa50 (Squashed history)
+1. **Host Layer** (macOS/Windows/Linux)
+2. **Lima Layer** (Virtualization abstraction)
+3. **Kubernetes Layer** (Orchestration)
+4. **Firecracker Layer** (Execution environment)
 
 ## Components
 
-### lime-ctrl
-The lime-ctrl component is a Kubernetes controller that manages MicroVM custom resources. It provides:
-<<<<<<< HEAD
-- API server for creating, managing, and executing code in microVMs
-- Integration with Kubernetes for resource management
-- Support for MCP sessions
-- One-time code execution capabilities
+### 1. pyroshell: Host API Gateway
 
-### kvm-device-plugin
-The kvm-device-plugin is a Kubernetes device plugin that:
-- Discovers and advertises KVM devices to the Kubernetes cluster
-- Allocates KVM devices to pods that request them
-- Monitors the health of KVM devices
+Acts as the entry point on the host machine, providing API access to the TVM system.
 
-### flintlock
-The flintlock component:
-- Runs Firecracker microVMs
-- Manages VM lifecycle (start, stop, snapshot)
-- Provides isolation between VMs
-- Executes commands within VMs
-=======
-- **API Server**: RESTful API for creating, managing, and executing code in microVMs
-- **Controller Logic**: Implements reconciliation loops for custom resources
-- **Resource Management**: Integrates with Kubernetes for efficient resource allocation
-- **MCP Protocol Support**: Implements the Model Context Protocol specification
-- **Execution Engine**: Coordinates code execution across microVMs
-- **State Management**: Maintains the state of all running VMs and sessions
-- **Metrics Collection**: Gathers performance and usage metrics
+### 2. pyrolima: Lima Management
 
-### kvm-device-plugin
-The kvm-device-plugin is a Kubernetes device plugin that:
-- **Device Discovery**: Automatically detects KVM capabilities on nodes
-- **Resource Advertising**: Exposes KVM devices to the Kubernetes scheduler
-- **Resource Allocation**: Manages exclusive access to KVM devices
-- **Health Monitoring**: Continuously checks device health and availability
-- **Resource Cleanup**: Ensures proper release of resources when pods terminate
-- **Metrics Reporting**: Provides utilization metrics for capacity planning
+Manages the Lima virtualization layer with zero persistence.
 
-### flintlock
-The flintlock component:
-- **VM Orchestration**: Manages the lifecycle of Firecracker microVMs
-- **Snapshot Management**: Creates and restores VM snapshots for fast startup
-- **Network Configuration**: Sets up virtual network interfaces for VM connectivity
-- **Storage Management**: Handles VM disk images and persistent storage
-- **Command Execution**: Securely executes commands within VMs
-- **Resource Isolation**: Enforces CPU, memory, and I/O limits
-- **Logging & Monitoring**: Captures VM logs and performance metrics
->>>>>>> 10bfa50 (Squashed history)
+### 3. pyrovm: Firecracker Management
 
-## Custom Resources
+Manages Firecracker microVMs for code execution.
 
-### MicroVM
-The MicroVM Custom Resource Definition (CRD) defines the schema for microVMs in Kubernetes:
-<<<<<<< HEAD
-- VM specifications (CPU, memory, image)
-- VM status and lifecycle information
-- Support for snapshots and persistent storage
+### 4. Istio Integration
 
-### MCPSession
-The MCPSession CRD defines the schema for MCP sessions:
-- Session specifications (user, group, VM)
-- Session status and activity information
-- Connection details
+Provides connectivity between all layers of the system.
 
-## Features
+## Supported Programming Languages
 
-- **Isolated Execution**: Run code in isolated microVMs for security and resource control
-- **MCP Support**: Use the Model Context Protocol to interact with models
-- **Kubernetes Native**: Fully integrated with Kubernetes for orchestration and management
-- **Cross-Platform**: Works on both Linux and non-Linux platforms (with some limitations)
-- **Resource Efficiency**: Lightweight VMs with minimal overhead
-=======
-```yaml
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: microvms.vvm.tvm.github.com
-spec:
-  group: vvm.tvm.github.com
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            spec:
-              type: object
-              properties:
-                image:
-                  type: string
-                  description: "Container image to use for the microVM"
-                cpu:
-                  type: integer
-                  description: "Number of vCPUs to allocate"
-                memory:
-                  type: integer
-                  description: "Memory in MB to allocate"
-                mcpMode:
-                  type: boolean
-                  description: "Enable MCP protocol support"
-```
+- Python (3.8, 3.9, 3.10, 3.11)
+- JavaScript (Node 16, 18, 20)
+- Ruby (2.7, 3.0, 3.1)
+- Go (1.18, 1.19, 1.20)
+- Rust (1.65, 1.70)
+- Java (11, 17)
+- C/C++ (GCC 11, Clang 14)
 
-### MCPSession
-The MCPSession CRD defines the schema for MCP sessions:
-```yaml
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: mcpsessions.vvm.tvm.github.com
-spec:
-  group: vvm.tvm.github.com
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          properties:
-            spec:
-              type: object
-              properties:
-                userId:
-                  type: string
-                  description: "User identifier"
-                groupId:
-                  type: string
-                  description: "Group identifier"
-                vmId:
-                  type: string
-                  description: "Reference to MicroVM resource"
-```
+## Installation
 
-## Technical Features
-
-- **Isolated Execution Environment**:
-  - Firecracker-based microVMs provide hardware-level isolation
-  - Each execution environment has its own kernel and filesystem
-  - Memory and CPU resources are strictly isolated between VMs
-
-- **MCP Protocol Implementation**:
-  - Full support for the Model Context Protocol specification
-  - Bidirectional streaming for real-time communication
-  - Support for tool definitions and resource access
-
-- **Kubernetes Native Architecture**:
-  - Custom controllers and CRDs for declarative management
-  - Integration with Kubernetes RBAC for access control
-  - Leverages Kubernetes scheduling and resource management
-
-- **High Performance**:
-  - Sub-second VM boot times using optimized kernels
-  - Minimal memory overhead compared to containers
-  - Efficient resource utilization with dynamic scaling
-
-- **Security Features**:
-  - VM-level isolation prevents privilege escalation
-  - Immutable root filesystems for predictable execution
-  - Network policies for controlling VM communication
->>>>>>> 10bfa50 (Squashed history)
-
-## Getting Started
-
-### Prerequisites
-- Kubernetes cluster
-- KVM-enabled nodes (for Linux)
-- Lima (for macOS)
-
-### Installation
-1. Apply the CRDs:
-   ```
-   kubectl apply -f deploy/crds/
-   ```
-
-2. Deploy the components:
-   ```
-   kubectl apply -f deploy/
-   ```
-
-### Usage
-
-#### Creating a MicroVM
-```yaml
-apiVersion: vvm.tvm.github.com/v1alpha1
-kind: MicroVM
-metadata:
-  name: test-microvm
-spec:
-  image: ubuntu:20.04
-  cpu: 1
-  memory: 512
-  mcpMode: true
-```
-
-#### Creating an MCP Session
-```yaml
-apiVersion: vvm.tvm.github.com/v1alpha1
-kind: MCPSession
-metadata:
-  name: test-session
-spec:
-  userId: user123
-  groupId: group456
-  vmId: test-microvm
-```
-
-#### Executing Code
 ```bash
-./scripts/vvm.sh execute "print('Hello from Firecracker!')"
+# Clone the repository
+git clone https://github.com/example/tvm.git
+cd tvm
+
+# Install the package
+pip install -e .
 ```
 
-## Why "Trashfire Vending Machine"?
+## Usage
 
-Because sometimes you need a quick, disposable environment to run potentially dangerous code - like getting a snack from a vending machine that might be on fire. It's convenient, isolated, and you can walk away when you're done!
+```bash
+# Start the TVM system
+tvm start
+
+# Execute code
+curl -X POST http://localhost:8080/api/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "print(\"Hello, World!\")",
+    "language": "python",
+    "language_version": "3.11",
+    "timeout_ms": 5000,
+    "memory_mb": 128,
+    "cpu_count": 1
+  }'
+
+# Check system status
+tvm status
+
+# Stop the TVM system
+tvm stop
+```
+
+## Requirements
+
+- Python 3.8+
+- Lima 0.14.0+
+- Kubernetes 1.23+ (K3s 1.27+ recommended inside Lima)
+- Istio 1.16+
+- Firecracker 1.1.0+
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT
